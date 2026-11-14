@@ -2,26 +2,28 @@ export const algorithms: string[] = [
   "bubbleSort",
   "binarySort",
   "quickSort",
-  "bruteForce",
+  "selection",
 ];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export type SortStep = { array: number[]; i: number; j: number };
 
-export async function bruteForce(
+export async function selectionSort(
   arr: number[],
   onStep: (step: SortStep) => void,
 ): Promise<number[]> {
-  let array = [...arr];
-  for (let i = 0; i < array.length; i++) {
-    for (let j = 0; j < array.length; j++) {
-      if (array[j] > array[i]) {
-        let higher = array[j];
-        let lower = array[i];
-        array[j] = lower;
-        array[i] = higher;
+  const array = [...arr];
+  for (let i = 0; i < array.length - 1; i++) {
+    let min = i;
+    for (let j = i; j < array.length; j++) {
+      if (array[j] < array[min]) {
+        min = j;
       }
       onStep({ array: [...array], i, j });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await sleep(500);
     }
+    [array[i], array[min]] = [array[min], array[i]];
   }
-  return Promise.resolve(array);
+  return array;
 }
