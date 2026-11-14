@@ -1,6 +1,8 @@
 "use client";
 
+import AlgorithmSelector from "@/components/AlgorithmSelector";
 import Bar from "@/components/Bar";
+import { bruteForce } from "@/lib/algorithms";
 import { useEffect, useState } from "react";
 
 const randomNumbers: (count: number) => number[] = (count: number) => {
@@ -12,12 +14,9 @@ const randomNumbers: (count: number) => number[] = (count: number) => {
 };
 
 export default function Home() {
-  // Start empty so the server and browser render the same HTML,
-  // then generate random numbers only in the browser after the page loads.
   const [numbers, setNumbers] = useState<number[]>([]);
 
   useEffect(() => {
-    // Intentional: random data can only be created in the browser to avoid a hydration mismatch.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setNumbers(randomNumbers(10));
   }, []);
@@ -29,7 +28,15 @@ export default function Home() {
           Testing Numbers: {numbers.join(", ")}
         </h1>
         <div className="w-full flex flex-row gap-4 align-left">
-          <button className="bg-green-600 rounded hover:bg-green-700 cursor-pointer">
+          <AlgorithmSelector />
+          <button
+            className="bg-green-600 rounded hover:bg-green-700 cursor-pointer"
+            onClick={async () =>
+              await bruteForce(numbers, ({ array }) => {
+                setNumbers(array);
+              })
+            }
+          >
             Sort Numbers
           </button>
           <button

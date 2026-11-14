@@ -1,7 +1,13 @@
+import { algorithms } from "@/lib/algorithms";
+
 const AlgorithmSelector = () => {
   return (
     <select>
-      <option value="bubbleSort">Bubble Sort</option>
+      {algorithms.map((value, index) => (
+        <option key={index} value={value}>
+          {value}
+        </option>
+      ))}
     </select>
   );
 };
