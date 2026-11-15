@@ -17,6 +17,7 @@ export default function Home() {
   const [numbers, setNumbers] = useState<number[]>([]);
   const [algorithm, setAlgorithm] = useState("mergeSort");
   const [active, setActive] = useState<Highlight[]>([]);
+  const [isSorting, setIsSorting] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -37,23 +38,27 @@ export default function Home() {
         <div className="flex flex-wrap items-center gap-3">
           <AlgorithmSelector value={algorithm} onChange={setAlgorithm} />
           <button
-            className="cursor-pointer rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400"
+            className="cursor-pointer rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={async () => {
               const sort = sortFunctions[algorithm];
               if (!sort) return;
+              setIsSorting(true);
               const sorted = await sort(numbers, ({ array, active }) => {
                 setNumbers(array);
                 setActive(active);
               });
               setNumbers(sorted);
               setActive([]);
+              setIsSorting(false);
             }}
+            disabled={isSorting}
           >
             Sort Numbers
           </button>
           <button
-            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setNumbers(randomNumbers(10))}
+            disabled={isSorting}
           >
             Reset Numbers
           </button>
