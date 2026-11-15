@@ -2,7 +2,7 @@
 
 import AlgorithmSelector from "@/components/AlgorithmSelector";
 import Bar from "@/components/Bar";
-import { selectionSort } from "@/lib/algorithms";
+import { Highlight, sortFunctions } from "@/lib/algorithms";
 import { useEffect, useState } from "react";
 
 const randomNumbers: (count: number) => number[] = (count: number) => {
@@ -15,7 +15,8 @@ const randomNumbers: (count: number) => number[] = (count: number) => {
 
 export default function Home() {
   const [numbers, setNumbers] = useState<number[]>([]);
-  const [active, setActive] = useState<{ i: number; j: number } | null>(null);
+  const [algorithm, setAlgorithm] = useState("mergeSort");
+  const [active, setActive] = useState<Highlight[]>([]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -29,16 +30,18 @@ export default function Home() {
           Testing Numbers: {numbers.join(", ")}
         </h1>
         <div className="w-full flex flex-row gap-4 align-left">
-          <AlgorithmSelector />
+          <AlgorithmSelector value={algorithm} onChange={setAlgorithm} />
           <button
             className="bg-green-600 rounded hover:bg-green-700 cursor-pointer"
             onClick={async () => {
-              const sorted = await selectionSort(numbers, ({ array, i, j }) => {
+              const sort = sortFunctions[algorithm];
+              if (!sort) return;
+              const sorted = await sort(numbers, ({ array, active }) => {
                 setNumbers(array);
-                setActive({ i, j });
+                setActive(active);
               });
               setNumbers(sorted);
-              setActive(null);
+              setActive([]);
             }}
           >
             Sort Numbers
@@ -52,12 +55,13 @@ export default function Home() {
         </div>
         <div className="flex flex-row gap-1 items-end h-80">
           {numbers.map((value, index) => {
-            const color =
-              index === active?.i
-                ? "bg-amber-400"
-                : index === active?.j
-                  ? "bg-rose-500"
-                  : "bg-mist-400";
+            // Each comparison in progress has its own range of bars, so the same
+            // two colors work for all of them: amber = current slot, rose = compared value.
+            const color = active.some((h) => h.i === index)
+              ? "bg-amber-400"
+              : active.some((h) => h.j === index)
+                ? "bg-rose-500"
+                : "bg-mist-400";
 
             return <Bar key={index} value={value} color={color} />;
           })}
