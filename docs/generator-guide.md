@@ -115,6 +115,7 @@ Do this **outside this repo** so Next's type-check doesn't pick it up.
 mkdir ~/generator-playground && cd ~/generator-playground
 # Node 22.18+ / 24 runs .ts files directly (types are stripped).
 # Older Node: use `npx tsx file.ts` instead of `node file.ts`.
+# Importing between your own files without a `.ts` extension also needs tsx.
 ```
 
 ### Exercise 1: Poke at a generator (5 min)
@@ -171,7 +172,11 @@ Test the copy bug on purpose. Yield `pegs` without copying and print every frame
 
 ### Exercise 4: Terminal player (20–30 min)
 
-This exercise is the important one. Build a player that holds `frames` and an `index`, and controls it from the keyboard:
+> **Optional if you're already on Part 3.** Step 7.9 practices the same ideas (a timer, keyboard input, cleanup) inside the React app.
+>
+> **Troubleshooting:** `setRawMode is not a function` means stdin isn't an interactive terminal. Run it from a real terminal window, not an IDE "Run" button or a command with piped input.
+
+Build a player that holds `frames` and an `index`, and controls it from the keyboard:
 
 | Key | Action |
 | --- | --- |
@@ -288,7 +293,7 @@ Things to watch for:
 
 ### Step 4: Sanity-check without the UI
 
-Before touching React, prove the algorithms work. A quick throwaway check (temporarily in a file, or with Vitest in Step 9):
+Before touching React, prove the algorithms work. A quick throwaway check (temporarily in a file, or with Vitest in Step 9). Run it with `npx tsx path/to/file.ts`, not plain `node`, because Node's ESM loader won't resolve extensionless imports like `./lib/algorithms`:
 
 ```ts
 const frames = [...mergeSort([5, 3, 8, 1, 9, 2])];
@@ -344,23 +349,366 @@ Why this shape works:
 - It never needs to call `setIsPlaying(false)` at the end, because `isRunning` turns false on its own when `isDone` becomes true.
 - Changing `delay` while playing takes effect on the next frame, with no special handling.
 
-### Step 7: Controls
+### Step 7: Player controls
 
-Each control is now a small state change:
+This is the biggest step, so it's split into parts. Snippets marked `TODO` or with a hint in a collapsed section are for you to finish.
 
-| Control | What it does |
+What you're building:
+
+```
+[ mergeSort ▾ ]   [ ◀ ]  [ ▶ Sort ]  [ ▶ ]          [ ⤮ New array ]
+
+Step   ━━━━━━━━━━━━●━━━━━━━━━━━━━━━━━━━━━━━━━━━━   42 / 118
+Speed  ━━━━━━━━━━━━━━━━━━━━━━━━●━━━━━━━━━━━━━━━━   120ms
+```
+
+#### 7.0: Packages
+
+You don't need any packages. Everything here is React state, `<button>` and the browser's built-in `<input type="range">`.
+
+Optional:
+
+| Package | Command | Why |
+| --- | --- | --- |
+| `lucide-react` | `pnpm add lucide-react` | Icons for play/pause/step. Each icon is a small React component (`<Play className="size-4" />`), and only the icons you import end up in your bundle. **Recommended.** |
+| `tsx` | `pnpm add -D tsx` | Saves it as a dev dependency so scratch scripts run with `pnpm tsx file.ts` instead of downloading it through `npx` each time. |
+| `vitest` | `pnpm add -D vitest` | Step 9. |
+
+**Skip** slider component libraries (Radix, shadcn's Slider). The built-in range input already supports the keyboard and screen readers, and styling it yourself is the CSS practice. Also skip `clsx` until your class strings actually get messy.
+
+The icons you'll probably want from lucide are `Play`, `Pause`, `RotateCcw` (replay), `StepBack`, `StepForward` and `Shuffle` (new array). You can browse the rest at lucide.dev.
+
+#### 7.1: Before you start: check `mergeSort`
+
+Two things in the current `algorithms.ts`:
+
+- **The highlight indices are wrong.** `{ i: leftIndex, j: rightIndex }` are positions inside the `left` and `right` *copies*, not positions of bars on screen, so the highlight will always appear near the start of the array. Ask yourself which bar index is about to be written to, and which bar index holds the right-hand value being compared.
+  <details><summary>Hint</summary>`k` is the slot being written. The right candidate started at `mid + rightIndex`, and nothing has overwritten it yet.</details>
+- **The `active` Set in `mergeSort` is no longer used.** Delete it.
+
+#### 7.2: Player status
+
+Right now you have `isPlaying`, `isDone` and `isRunning`. The UI actually needs to tell apart **four** states, each with its own button label and behavior:
+
+| Status | When | Main button | Clicking it |
+| --- | --- | --- | --- |
+| `idle` | no steps yet | Sort | build steps, go to 0, play |
+| `playing` | running | Pause | pause |
+| `paused` | has steps, not playing, not done | Resume | play |
+| `done` | on the last frame | Replay | go to 0, play |
+
+Give that a name with a union type, and compute it like the other derived values:
+
+```tsx
+type PlayerStatus = "idle" | "playing" | "paused" | "done";
+
+const hasSteps = steps.length > 0;
+const status: PlayerStatus = /* TODO */;
+```
+
+<details><summary>Hint</summary>
+
+The order of checks matters. `isPlaying` can still be `true` when you reach the last frame, because nothing sets it back to false. So check `idle` first, then `done`, then `playing`, and anything left over is `paused`.
+
+</details>
+
+A union type plus a `Record` lookup gives you labels with no nested ternaries, and TypeScript will error if you add a status and forget to give it a label:
+
+```tsx
+const PLAY_LABEL: Record<PlayerStatus, string> = {
+  idle: "Sort",
+  playing: "Pause",
+  paused: "Resume",
+  done: "Replay",
+};
+```
+
+Put `PlayerStatus` and `PLAY_LABEL` **outside** the component, since they never change.
+
+#### 7.3: Handlers
+
+Two functions do all the work. `goTo` is complete:
+
+```tsx
+// Any manual navigation pauses, so the clock doesn't fight the user.
+const goTo = (index: number) => {
+  setIsPlaying(false);
+  setStepIndex(Math.min(Math.max(index, 0), steps.length - 1));
+};
+```
+
+`togglePlay` replaces the current Sort button's `onClick`:
+
+```tsx
+const togglePlay = () => {
+  switch (status) {
+    case "playing":
+      setIsPlaying(false);
+      return;
+    case "idle": {
+      const sort = sortFunctions[algorithm];
+      if (!sort) return;
+      // TODO: build the steps and start from frame 0
+      break;
+    }
+    case "done":
+      // TODO: what's the smallest change that replays from the start?
+      break;
+    case "paused":
+      break; // nothing extra needed; the line below handles it
+  }
+  setIsPlaying(true);
+};
+```
+
+Question: in the `done` case, do you need to rebuild the steps? (`numbers` and `algorithm` haven't changed.)
+
+#### 7.4: Buttons
+
+Replace the Sort button and add the two step buttons:
+
+```tsx
+<button onClick={() => goTo(stepIndex - 1)} disabled={/* TODO */} aria-label="Step back">
+  <StepBack className="size-4" />
+</button>
+
+<button onClick={togglePlay} /* primary styles */>
+  {/* TODO: icon based on status (Pause when playing, RotateCcw when done, Play otherwise) */}
+  {PLAY_LABEL[status]}
+</button>
+
+{/* TODO: step forward button */}
+```
+
+Things to figure out:
+
+- **`disabled` on each step button.** When should step back be disabled? Step forward? (There are two reasons for each.)
+- **`aria-label` on buttons that only show an icon.** A screen reader can't read an SVG, so without it the button is announced as just "button". The Play button has visible text, so it doesn't need one.
+- **The selector.** Add a `disabled?: boolean` prop to `AlgorithmSelector`, pass it through to the `<select>`, and disable it while `status === "playing"`. Add `disabled:opacity-50 disabled:cursor-not-allowed` while you're there.
+- **Repeated styles.** You'll now have four or five buttons with the same long class strings. Pull them out into a small `Button` component with a `variant: "primary" | "secondary"` prop.
+
+#### 7.5: The step scrubber
+
+A **controlled** range input: React owns the value, and the input just reports changes.
+
+```tsx
+<input
+  type="range"
+  min={0}
+  max={Math.max(steps.length - 1, 0)}
+  value={stepIndex}
+  onChange={(e) => goTo(Number(e.target.value))}
+  disabled={!hasSteps}
+  aria-label="Step"
+  aria-valuetext={/* TODO: e.g. "Step 42 of 118" */}
+/>
+<span className="font-mono tabular-nums">{/* TODO: "42 / 118", or "–" when idle */}</span>
+```
+
+Notes:
+
+- `e.target.value` is always a **string**, even on a range input. That's why it goes through `Number(...)`.
+- `Math.max(..., 0)` stops `max` from becoming `-1` when there are no steps.
+- `aria-valuetext` is what a screen reader announces. Without it, it reads the raw number ("41"), which is also off by one from what you show on screen.
+- `tabular-nums` makes every digit the same width, so the counter doesn't shift as it changes.
+- Arrow keys on a focused range input already work, and they go through `onChange`, so stepping by keyboard needs no extra code.
+
+#### 7.6: The speed slider
+
+The state is a `delay` in milliseconds, but users expect **right = faster**. A larger delay is slower, so the slider has to be inverted.
+
+```tsx
+const MIN_DELAY = 20;
+const MAX_DELAY = 1000;
+
+<input
+  type="range"
+  min={MIN_DELAY}
+  max={MAX_DELAY}
+  step={20}
+  value={/* TODO: map delay → slider position */}
+  onChange={(e) => setDelay(/* TODO: map slider position → delay */)}
+  aria-label="Speed"
+/>
+```
+
+<details><summary>Hint</summary>
+
+If the slider runs from `MIN` to `MAX`, then `MIN + MAX - x` flips any value in that range. It's its own inverse, so the same formula works in both directions.
+
+</details>
+
+Question: why does changing speed while playing take effect on the very next frame? (Look at the clock effect's dependency array.)
+
+#### 7.7: CSS practice: layout
+
+Goal: the two slider rows line up as columns (labels, then tracks, then values) without guessing fixed widths like `w-16`.
+
+Here's the structure. You write the Tailwind classes:
+
+```tsx
+<div className="/* TODO: grid with 3 columns: auto, 1fr, auto */">
+  <label className="/* TODO: this row shares the parent's columns */">
+    <span>Step</span>
+    <input type="range" ... />
+    <span>42 / 118</span>
+  </label>
+  <label className="/* same */">
+    <span>Speed</span>
+    <input type="range" ... />
+    <span>120ms</span>
+  </label>
+</div>
+```
+
+<details><summary>Hint</summary>
+
+The parent is `grid grid-cols-[auto_1fr_auto]`. Each `<label>` is a single grid item, so on its own its children wouldn't use the parent's columns. Look up **CSS subgrid**: `grid-cols-subgrid col-span-3` makes each label lay out its children on the parent's columns. Then the widest label sets the column width for both rows.
+
+</details>
+
+For the toolbar: `flex flex-wrap` is fine, but push New Array to the far right. (Hint: one class on that button. Look up how `margin-left: auto` behaves in a flex container.)
+
+#### 7.8: CSS practice: styling the range inputs
+
+**Level 1:** add `accent-emerald-500`. That's the `accent-color` CSS property, which recolors native form controls in one line. It's good enough to ship.
+
+**Level 2:** a fully custom track and thumb. Range inputs are made of browser-specific parts, so this goes in `globals.css` instead of utility classes. Start from:
+
+```css
+@layer components {
+  .range {
+    appearance: none; /* turn off the browser's built-in look */
+    height: 0.375rem;
+    border-radius: 9999px;
+    cursor: pointer;
+    /* the filled part of the track up to --fill, then the empty part */
+    background: linear-gradient(
+      to right,
+      var(--color-emerald-500) var(--fill, 0%),
+      var(--color-zinc-800) var(--fill, 0%)
+    );
+  }
+
+  .range::-webkit-slider-thumb {
+    appearance: none;
+    /* TODO: size, border-radius, background, a ring/shadow, transition */
+  }
+
+  .range::-moz-range-thumb {
+    /* TODO: same look as above */
+  }
+
+  .range:focus-visible {
+    /* TODO: visible focus ring for keyboard users */
+  }
+
+  .range:disabled {
+    /* TODO */
+  }
+}
+```
+
+Things to learn here:
+
+- **Why are the webkit and moz thumbs separate rules?** Try combining them into one selector list (`::-webkit-slider-thumb, ::-moz-range-thumb { ... }`) and test in Chrome. If a browser doesn't recognize any selector in a list, it drops the **whole rule**.
+- **The fill:** `--fill` is a CSS variable set from React. TypeScript doesn't know about custom properties, so you need a cast:
+  ```tsx
+  style={{ "--fill": `${percent}%` } as React.CSSProperties}
+  ```
+  Work out `percent` from `stepIndex` and `steps.length` yourself, and watch out for dividing by zero.
+- **Why `@layer components`?** Tailwind v4 puts its utilities in a later cascade layer than `components`, so a utility class on the element can still override your `.range` styles. Plain, unlayered CSS would beat every utility.
+- **Hover/active feedback:** scale the thumb up a little on `:hover` and `:active`. Then wrap that in `@media (prefers-reduced-motion: no-preference)` so people who've asked for less motion don't get it.
+- If a `var(--color-…)` you reference doesn't seem to apply, Tailwind may not be outputting that variable because no class uses it. Check the computed styles in devtools.
+
+#### 7.9: Keyboard shortcuts (the input practice)
+
+This is the React version of Exercise 4, and it uses everything from the `useEffect` cleanup discussion.
+
+| Key | Action |
 | --- | --- |
-| **Sort / Play** | If there are no steps (or `isDone`): `setSteps([...sort(numbers)])`, `setStepIndex(0)`. Then `setIsPlaying(true)`. |
-| **Pause** | `setIsPlaying(false)` |
-| **Step ←/→** | `setIsPlaying(false)` and `setStepIndex(i => clamp(i ± 1, 0, steps.length - 1))` |
-| **Scrub** | `<input type="range" min={0} max={steps.length - 1} value={stepIndex} />` → `setIsPlaying(false); setStepIndex(Number(e.target.value))` |
-| **Speed** | `<input type="range">` → `setDelay(...)`. Tip: put "fast" on the right by inverting the value. |
-| **Reset / New array** | `setNumbers(randomNumbers(n))`, `setSteps([])`, `setStepIndex(0)`, `setIsPlaying(false)` |
-| **Change algorithm** | Clear `steps` too, or you'll replay the old algorithm's frames. |
+| `Space` | play / pause |
+| `←` / `→` | step back / forward |
+| `n` | new array |
 
-Disable the algorithm selector while `isRunning`. Reset no longer needs to be disabled, because clearing `steps` cancels the run.
+Start with this **deliberately buggy** version and use it for a bit:
 
-Styling the two range inputs is good CSS practice: start with `accent-color`, then look up `::-webkit-slider-thumb` and `::-moz-range-thumb`.
+```tsx
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => {
+    if (e.key === " ") {
+      e.preventDefault(); // stop the page from scrolling
+      togglePlay();
+    }
+    // TODO: arrows, n
+  };
+  window.addEventListener("keydown", handler);
+  return () => window.removeEventListener("keydown", handler);
+}, []);
+```
+
+Press Space to start a sort, then press it again to pause. **What happens, and why?**
+
+<details><summary>Explanation</summary>
+
+With `[]` the effect runs once, so `handler` holds onto the `togglePlay` from the **first render**. In that render `status` was `"idle"`, and it stays `"idle"` for that function forever. Every Space press rebuilds the steps and restarts. This is called a **stale closure**.
+
+There are two fixes:
+
+1. Add `togglePlay` (and everything else the handler uses) to the dependencies. That works, but since `togglePlay` is a new function on every render, the listener gets removed and re-added every frame.
+2. **`useEffectEvent`** (stable since React 19.2). It wraps a function so that it always sees the latest props and state, without being a dependency:
+
+```tsx
+const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+  // always sees the current status, steps, stepIndex...
+});
+
+useEffect(() => {
+  const handler = (e: KeyboardEvent) => onKeyDown(e);
+  window.addEventListener("keydown", handler);
+  return () => window.removeEventListener("keydown", handler);
+}, []);
+```
+
+</details>
+
+Edge cases to handle in `onKeyDown`:
+
+- **Focus inside a form control.** If the focus is in an `input`, `select` or `textarea`, return early, because those controls use the arrows and Space themselves. (`e.target instanceof HTMLElement && e.target.closest("input, select, textarea")`)
+- **Space on a focused button.** Click Play with the mouse, and the focus stays on that button. Pressing Space now *also* clicks the button natively, so it toggles twice and nothing seems to happen. Skip Space when `e.target` is inside a `button`, but still handle the arrows.
+- **Modifier keys.** Ignore the key when `e.metaKey` or `e.ctrlKey` is held, so you don't take over browser shortcuts.
+- **Key repeat.** Holding Space fires `keydown` repeatedly, and `e.repeat` is `true` for those. What should happen?
+
+#### 7.10: Extract `PlayerControls`
+
+Once everything works inline, move the toolbar and sliders into `src/components/PlayerControls.tsx`. Make it **presentational**: it receives values and callbacks, and has no state of its own.
+
+```tsx
+type PlayerControlsProps = {
+  status: PlayerStatus;
+  stepIndex: number;
+  stepCount: number;
+  delay: number;
+  onTogglePlay: () => void;
+  onStepTo: (index: number) => void;
+  onDelayChange: (delay: number) => void;
+};
+```
+
+`PlayerStatus` and `PLAY_LABEL` would then live in the component file, or in `src/lib/`. Decide which, and be able to explain why. `page.tsx` keeps the state, the clock and the handlers; `PlayerControls` only renders them.
+
+#### 7.11: Manual test pass
+
+- [ ] Sort, then Pause partway, then Resume: it continues from the same frame
+- [ ] Pause, step back 3 frames, then Resume: it continues from the earlier frame
+- [ ] Drag the scrubber while playing: it pauses
+- [ ] Change speed while playing: it takes effect right away
+- [ ] At the end: the label says Replay, and clicking it starts from frame 1
+- [ ] New Array partway through a sort: the new bars appear and nothing keeps moving
+- [ ] Change the algorithm partway through: it stops and shows the original numbers
+- [ ] Step buttons are disabled at both ends and when idle
+- [ ] Keyboard: Space, ← and → work, Space doesn't scroll the page, and arrows inside the scrubber and select still work normally
+- [ ] Tab through every control: each one shows a visible focus ring
 
 ### Step 8: Delete the old code
 
@@ -402,7 +750,7 @@ These are small now that the player exists:
 
 - **Stats:** count comparisons and writes. Add them to `SortStep`, or compute them from the frames.
 - **Sorted sweep:** after the final frame, yield frames that turn bars green one by one. You'll need a new field such as `sorted: number[]` and a new color token.
-- **Keyboard shortcuts:** the same idea as Exercise 4, using `useEffect` + `keydown`.
+- **Array size slider:** reuse your `.range` styles. What should happen to existing steps when the size changes?
 - **Remaining algorithms:** bubble sort and quick sort (quick sort uses `yield*` like merge sort).
 
 ---
@@ -416,6 +764,15 @@ These are small now that the player exists:
 - [ ] Sanity check: last frame is sorted
 - [ ] Player state with derived `frame` / `isDone` / `isRunning`
 - [ ] `setTimeout` clock effect
-- [ ] Play / pause / step / scrub / speed / reset
+- [ ] `mergeSort` highlight indices fixed, unused Set removed (7.1)
+- [ ] `PlayerStatus` + `PLAY_LABEL` (7.2)
+- [ ] `goTo` + `togglePlay` (7.3)
+- [ ] Play/pause + step buttons, `AlgorithmSelector` disabled prop (7.4)
+- [ ] Step scrubber (7.5) and speed slider (7.6)
+- [ ] Subgrid slider layout (7.7)
+- [ ] Custom range styles (7.8)
+- [ ] Keyboard shortcuts with `useEffectEvent` (7.9)
+- [ ] `PlayerControls` extracted (7.10)
+- [ ] Manual test pass (7.11)
 - [ ] Old async code deleted, `pnpm lint && pnpm build` pass
 - [ ] (Optional) Vitest suite
