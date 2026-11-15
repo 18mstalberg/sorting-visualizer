@@ -24,15 +24,20 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="w-full min-h-screen">
-      <main className="flex flex-col items-center w-full">
-        <h1 className="text-base font-bold text-white w-full text-center">
-          Testing Numbers: {numbers.join(", ")}
-        </h1>
-        <div className="w-full flex flex-row gap-4 align-left">
+    <div className="min-h-screen w-full bg-zinc-950 text-zinc-100">
+      <main className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-16">
+        <header className="flex flex-col gap-2">
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Sorting Visualizer
+          </h1>
+          <p className="font-mono text-sm text-zinc-500">
+            {numbers.join(", ")}
+          </p>
+        </header>
+        <div className="flex flex-wrap items-center gap-3">
           <AlgorithmSelector value={algorithm} onChange={setAlgorithm} />
           <button
-            className="bg-green-600 rounded hover:bg-green-700 cursor-pointer"
+            className="cursor-pointer rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400"
             onClick={async () => {
               const sort = sortFunctions[algorithm];
               if (!sort) return;
@@ -47,13 +52,13 @@ export default function Home() {
             Sort Numbers
           </button>
           <button
-            className="bg-blue-500 rounded hover:bg-blue-600 cursor-pointer"
+            className="cursor-pointer rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
             onClick={() => setNumbers(randomNumbers(10))}
           >
             Reset Numbers
           </button>
         </div>
-        <div className="flex flex-row gap-1 items-end h-80">
+        <div className="flex h-96 items-end gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
           {numbers.map((value, index) => {
             // Each comparison in progress has its own range of bars, so the same
             // two colors work for all of them: amber = current slot, rose = compared value.
